@@ -24,7 +24,7 @@ scipy==1.15.3
 
 # Video/Media processing
 av==15.0.0
-decord==0.6.0
+# decord==0.6.0 — built from source in Dockerfile (no aarch64+cp312 wheel on PyPI)
 imageio[pyav,ffmpeg]==2.37.0
 imageio-ffmpeg==0.6.0
 tifffile==2025.5.10
@@ -45,7 +45,7 @@ regex==2024.11.6
 # Data loading and storage
 webdataset==0.2.111
 zarr==2.18.3
-tensorstore==0.1.45
+tensorstore==0.1.82
 numcodecs==0.13.1
 
 # AWS/S3 support
@@ -76,7 +76,7 @@ huggingface-hub==0.35.3
 # Inference extras (moved from INSTALL.md step 7)
 pyquaternion
 lru-dict
-OpenEXR==3.2.3
+OpenEXR==3.4.11
 jaxtyping
 portalocker
 tabulate
@@ -87,6 +87,7 @@ lazy-loader>=0.4
 hatchling
 hatch-vcs>=0.4
 editables
+trove-classifiers
 
 # Testing
 coverage==7.9.2
@@ -113,7 +114,7 @@ jinja2==3.1.6
 jmespath==1.0.1
 markupsafe==3.0.2
 ninja==1.11.1.4
-nvidia-ml-py==12.535.133
+nvidia-ml-py==12.575.51
 orjson==3.11.3
 parso==0.8.4
 pexpect==4.9.0

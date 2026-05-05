@@ -1,0 +1,22 @@
+image = "${SCRATCH}/ce-images/lyra2.sqsh"
+
+mounts = [
+    "/capstor",
+    "/iopsstor",
+    "${HOME}",
+    "tmpfs:/dev/shm:rw,nosuid,nodev,size=96G",
+    "tmpfs:/opt/amazon/efa/lib:rw,nosuid,nodev,size=1M",
+]
+
+workdir = "${SCRATCH}/lyra/Lyra-2"
+
+[annotations]
+com.hooks.aws_ofi_nccl.enabled = "true"
+com.hooks.aws_ofi_nccl.variant = "cuda12"
+com.hooks.dcgm.enabled = "true"
+
+[env]
+NCCL_DEBUG = "WARN"
+CUDA_CACHE_DISABLE = "1"
+TORCH_NCCL_ASYNC_ERROR_HANDLING = "1"
+MPICH_GPU_SUPPORT_ENABLED = "0"

@@ -1,0 +1,14 @@
+{
+  "pythonVersion": "3.12",
+  "extraPaths": [
+    "lyra_2",
+    "lyra_2/_src/inference/vipe",
+    "lyra_2/_src/inference/depth_anything_3",
+    "/tmp/ecetin-ce-images/mnt/lyra2/usr/local/lib/python3.12/dist-packages",
+    "/tmp/ecetin-ce-images/mnt/lyra2/usr/lib/python3/dist-packages"
+  ],
+  "reportMissingModuleSource": "none",
+  "reportArgumentType": "none",
+  "reportPossiblyUnboundVariable": "none",
+  "reportAttributeAccessIssue": "none"
+}

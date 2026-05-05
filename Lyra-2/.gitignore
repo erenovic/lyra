@@ -104,3 +104,7 @@ results/
 .checkpoint_keep
 attn_mask_vis/
 attn_mask_vis_*
+
+checkpoints
+
+.bashrc
