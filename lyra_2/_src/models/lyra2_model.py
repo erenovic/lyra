@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional, List, cast
+import os
 import random
 from statistics import NormalDist
 import numpy as np
@@ -83,6 +84,8 @@ class Lyra2T2VConfig(T2VModelConfig):
     spatial_memory_skip_recent: int = 100
     spatial_memory_use_image: bool = False
     spatial_memory_dropout_rate: float = 0.1
+    # Spatial downsample of depth before Sparse3DCache unprojection; 4 too coarse at 64x64.
+    spatial_memory_downsample: int = 4
 
     # Optional: comma-separated list of submodule names in Lyra2AttentionBlock to train.
     # If provided, all other parameters are frozen.
@@ -96,6 +99,10 @@ class Lyra2T2VConfig(T2VModelConfig):
     # If None, defaults to the number of spatial history slots from framepack_type.
     multibuffer_max_spatial_frames: Optional[int] = None
     warp_chunk_size: int = 2
+    # Depth-continuity cleaning threshold for correspondence warping. The 0.05 upstream
+    # default discards ~90%+ of 64x64 maze warp points; ~0.25 keeps ~5x more at negligible
+    # depth error (see eval_warp_geometry.py sweep).
+    warp_continuity_ratio_thresh: float = 0.05
 
 
 class Lyra2Model(WANDiffusionModel):
@@ -197,6 +204,8 @@ class Lyra2Model(WANDiffusionModel):
 
         if self._collect_return_condition_state:
             self._latest_gt_gen_pixels = video_win[:, :, -int(self.framepack_num_new_video_frames):].contiguous()
+            # Absolute frame indices of the generated region (for aligning GT depth/poses in viz).
+            self._latest_gt_gen_indices = video_indices[-int(self.framepack_num_new_video_frames):].clone()
 
         return video_win, video_indices, int(start), int(cur_segment_id), int(chunk_len)
 
@@ -1314,7 +1323,11 @@ class Lyra2Model(WANDiffusionModel):
                         else 1.0
                     )
 
-                    sigmas_steps =np.linspace(sigmasA.squeeze().item(), 0.0, steps_A)
+                    # Drop the trailing 0.0: FlowUniPCMultistepScheduler.set_timesteps appends its own
+                    # terminal zero, so passing a schedule that already ends at 0 yields a double-zero
+                    # step where sigma_t == sigma_s0 == 0 -> lambda = +inf -> h = inf - inf = NaN. Slicing
+                    # the endpoint (as the sigmas=None default path does) leaves exactly one terminal zero.
+                    sigmas_steps = np.linspace(sigmasA.squeeze().item(), 0.0, steps_A + 1)[:-1]
                     self.sample_scheduler.set_timesteps(
                         steps_A, device=self.tensor_kwargs["device"], sigmas=sigmas_steps, shift=shift_A
                     )
@@ -1680,6 +1693,7 @@ class Lyra2Model(WANDiffusionModel):
                             world_points1=None,
                             clean_points=True,
                             clean_points_continuity=True,
+                            continuity_ratio_thresh=self.config.warp_continuity_ratio_thresh,
                         )
                         warped_imgs_list.append(w_img)
                         warped_masks_list.append(w_mask)
@@ -1757,7 +1771,9 @@ class Lyra2Model(WANDiffusionModel):
                 buf_depth = buffer_depth_B_1_H_W.to(device=device, dtype=torch.float32).unsqueeze(1)  # [B,1,1,H,W]
                 buf_w2c = camera_w2c[:, abs_buffer_idx].to(dtype=torch.float32).unsqueeze(1)  # [B,1,4,4]
                 buf_K = intrinsics[:, abs_buffer_idx].to(dtype=torch.float32).unsqueeze(1)  # [B,1,3,3]
-                condition_state_pixels, _ = _warp_multisrc(buf_rgb, buf_depth, buf_w2c, buf_K)
+                condition_state_pixels, buffer_warped_depth = _warp_multisrc(
+                    buf_rgb, buf_depth, buf_w2c, buf_K, return_depth=self._collect_return_condition_state
+                )
 
                 if max_spatial > 0:
                     spatial_latents: list[torch.Tensor] = []
@@ -1791,6 +1807,10 @@ class Lyra2Model(WANDiffusionModel):
                         depth_stack = 2.0 * (depth_stack - dmin) / torch.clamp(dmax - dmin, min=1e-6) - 1.0
                         depth_norm_per_spatial = [depth_stack[:, i : i + 1] for i in range(int(depth_stack.shape[1]))]
 
+                        if self._collect_return_condition_state:
+                            # [B,N,F,H,W] in [-1,1]: per-spatial-slot warped depth (viz side channel).
+                            self._latest_spatial_warped_depth = depth_stack.detach()
+
                     for i, warped_coords in enumerate(spatial_warped_coords):
                         warped_for_latent = torch.cat([warped_coords, depth_norm_per_spatial[i]], dim=1)
                         coord_lat = self._coord_pixels_to_latents(
@@ -1811,6 +1831,16 @@ class Lyra2Model(WANDiffusionModel):
                         spatial_latents.extend([pad_lat] * (max_spatial - len(spatial_latents)))
                     buffer_cond_latents = torch.cat(spatial_latents, dim=1)
             if self._collect_return_condition_state:
+
+                if buffer_warped_depth is not None:
+                    # [B,1,F,H,W] -> [-1,1]: buffer-warp depth render (viz side channel).
+                    d = buffer_warped_depth.detach().float()
+                    dmin = d.amin(dim=(1, 2, 3, 4), keepdim=True)
+                    dmax = d.amax(dim=(1, 2, 3, 4), keepdim=True)
+                    self._latest_condition_state_depth = (
+                        2.0 * (d - dmin) / torch.clamp(dmax - dmin, min=1e-6) - 1.0
+                    )
+
                 if len(spatial_condition_pixels_list) > 0:
                     # Show buffer warp + all per-frame spatial warps (like multibuffer vis).
                     vis_list = [condition_state_pixels] + spatial_condition_pixels_list
@@ -2353,7 +2383,7 @@ class Lyra2Model(WANDiffusionModel):
 
             if num_spatial_hist > 0:
                 spatial_cache = Sparse3DCache(
-                    downsample=4,
+                    downsample=cfg.spatial_memory_downsample,
                     store_device=str(latents.device),
                     store_values=True,
                 )
@@ -2405,7 +2435,9 @@ class Lyra2Model(WANDiffusionModel):
                     camera_w2c=data_batch["camera_w2c"],
                     intrinsics=data_batch["intrinsics"],
                     video_indices=video_indices,
-                    is_training=True,
+                    # self.training: True in the training loop (random retrieval + dropout aug),
+                    # False under model.eval() so validation uses deterministic max-coverage retrieval.
+                    is_training=self.training,
                 )
             data_batch["cond_latent_buffer"] = buffer_cond_latents
             # Replace dummy tail latents with the actual ground-truth tail for training.
@@ -2825,11 +2857,16 @@ class Sparse3DCache:
             scores_t = counts.float()
             scores = scores_t.tolist()
 
-            score_map = {
-                int(self._latent_indices[i]): {"score": float(scores[i]), "frame_id": int(self._frame_ids[i])}
-                for i in range(num_cands)
-            }
-            log.info(f"Sparse3DCache.retrieve scores (latent_index -> score): {score_map}", rank0_only=True)
+            # Per-retrieve score dump: verbose (one big dict per step) -- gate behind an env flag
+            # so it doesn't bloat the training stdout. Set LYRA_RETRIEVE_DEBUG=1 to re-enable.
+            if os.environ.get("LYRA_RETRIEVE_DEBUG"):
+                score_map = {
+                    int(self._latent_indices[i]): {"score": float(scores[i]), "frame_id": int(self._frame_ids[i])}
+                    for i in range(num_cands)
+                }
+                log.info(
+                    f"Sparse3DCache.retrieve scores (latent_index -> score): {score_map}", rank0_only=True
+                )
 
             if random and num_latents > 0:
                 max_score = scores_t.max() if scores_t.numel() > 0 else scores_t.new_tensor(1.0)

@@ -67,6 +67,7 @@ def forward_warp_multiframes(
     world_points1=None,
     clean_points: bool = False,
     clean_points_continuity: bool = False,  # clean points based on depth continuity
+    continuity_ratio_thresh: float = 0.05,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     :param frame1: (b, v, 3, h, w). If frame1 is not in the range [-1, 1], either set is_image=False when calling
@@ -81,6 +82,9 @@ def forward_warp_multiframes(
     :param world_points1: (b, v, h, w, 3) optional precomputed world points.
     :param clean_points: bool, enable point cleaning.
     :param clean_points_continuity: bool, use depth continuity for cleaning.
+    :param continuity_ratio_thresh: max local depth spread (relative to local mean) a pixel may
+        have to survive continuity cleaning. Higher keeps more points; the 0.05 default suits
+        high-res smooth depth but discards ~90%+ of low-res maze depth (see eval_warp_geometry.py).
     """
     device = frame1.device
     b, v, c, h, w = frame1.shape
@@ -103,7 +107,9 @@ def forward_warp_multiframes(
         mask_valid = (depth1 > 0).to(dtype=mask1.dtype, device=device)
         if clean_points and clean_points_continuity:
             depth_flat = rearrange(depth1, "b v c h w -> (b v) c h w")
-            cont_mask_flat = reliable_depth_mask_range_batch(depth_flat).to(dtype=mask1.dtype, device=device)
+            cont_mask_flat = reliable_depth_mask_range_batch(
+                depth_flat, ratio_thresh=continuity_ratio_thresh
+            ).to(dtype=mask1.dtype, device=device)
             cont_mask = rearrange(cont_mask_flat, "(b v) c h w -> b v c h w", b=b, v=v)
             mask_valid = mask_valid * cont_mask
         mask1 = mask1 * mask_valid
