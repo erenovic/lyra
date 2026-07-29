@@ -16,11 +16,15 @@ class Wan2pt1CLIPEmbLyra2(AbstractEmbModel):
         dropout_rate: float = 0.0,
         num_token: int = 257,
         dtype: str = "bfloat16",
+        disable_clip_forward: bool = False,
     ):
         super().__init__()
         self.num_token = num_token
         self.model_dim = 1280
-        self.clip_model = CLIPModel()
+        # When disabled (e.g. maze: no useful CLIP signal, DiT cross-attn removed), skip building
+        # and running CLIP; still emit the load-bearing y / y_buffer latents in forward().
+        self.disable_clip_forward = bool(disable_clip_forward)
+        self.clip_model = None if self.disable_clip_forward else CLIPModel()
 
         self._input_key = input_key
         self._output_key = None
@@ -44,12 +48,14 @@ class Wan2pt1CLIPEmbLyra2(AbstractEmbModel):
     ) -> Dict[str, torch.Tensor]:
         assert media_latents is not None, "media_latents is required"
         assert mask is not None, "mask is required"
-        with torch.no_grad():
-            assert image_tensor is not None, "image_tensor is required"
-            context_B_L_D = self.clip_model.visual(image_tensor).to(self.dtype)
-
         y = torch.concat([mask, media_latents.to(self.dtype)], dim=1)
-        out = {"frame_cond_crossattn_emb_B_L_D": context_B_L_D, "y_B_C_T_H_W": y}
+        out = {"y_B_C_T_H_W": y}
+        # Omit the CLIP key entirely when disabled -- the conditioner torch.cat's each output key,
+        # so emitting None would crash; the condition dataclass defaults the field to None.
+        if not self.disable_clip_forward:
+            with torch.no_grad():
+                assert image_tensor is not None, "image_tensor is required"
+                out["frame_cond_crossattn_emb_B_L_D"] = self.clip_model.visual(image_tensor).to(self.dtype)
         if buffer_latents is not None:
             out["y_buffer_B_C_T_H_W"] = buffer_latents.to(self.dtype)
         return out
