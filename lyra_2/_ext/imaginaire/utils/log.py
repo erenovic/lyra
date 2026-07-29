@@ -67,6 +67,11 @@ def init_loguru_stdout() -> None:
 
 
 def init_loguru_file(path: str) -> None:
+    # Only rank 0 opens the file sink. Otherwise every DDP rank creates its own stdout file
+    # (one per rank, each rotating at 100 MB), cluttering the run directory. RANK is set by
+    # torchrun for every worker, so this is correct even before torch.distributed is initialized.
+    if int(os.environ.get("RANK", "0")) != 0:
+        return
     datetime_format = get_datetime_format()
     machine_format = get_machine_format()
     message_format = get_message_format()
