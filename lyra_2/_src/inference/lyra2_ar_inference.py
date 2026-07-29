@@ -382,9 +382,13 @@ class Lyra2InferencePipeline:
         vipe_input_dump_dir: Optional[str] = None,
         vipe_input_dump_prefix: Optional[str] = None,
         multiview_data: Optional[dict] = None,
+        gt_depth: Optional[torch.Tensor] = None,
     ):
         self.model = model
         self.args = args
+        # Full-trajectory GT depth [B, T, 1, H, W] for depth_backend="gt" (fixed camera path,
+        # so per-frame scene depth is known and used instead of DA3 prediction).
+        self.gt_depth = gt_depth
         self.cp_group = cp_group
         self.frames_per_latent = model.framepack_num_frames_per_latent
         self.tokens_per_step = model.framepack_num_new_latent_frames
@@ -479,6 +483,10 @@ class Lyra2InferencePipeline:
                         device=da3_device,
                     )
                     self.local_da3_model.eval()
+            elif self.depth_backend == "gt":
+                # Ground-truth depth: no predictor needed. The cache is seeded from first_depth
+                # below and updated per chunk from self.gt_depth in _update_depth_cache.
+                assert self.gt_depth is not None, "gt_depth is required for depth_backend='gt'"
             else:
                 raise ValueError(f"Unsupported depth_backend='{self.depth_backend}' for this inference script.")
 
@@ -486,7 +494,7 @@ class Lyra2InferencePipeline:
             # For inference we optionally store original depth values in the same cache used for retrieval.
             # This is required when use_accumulated_pcd=True (warping needs per-frame depth lookup by frame_id).
             self.retrieval_cache = Sparse3DCache(
-                downsample=4,
+                downsample=model.config.spatial_memory_downsample,
                 store_device=store_device,
                 store_values=True,
             )
@@ -1179,7 +1187,62 @@ class Lyra2InferencePipeline:
                     self.buffer_mask_latest = self.buffer_mask_latest.cpu()
             return
 
-        raise ValueError(f"Only depth_backend='da3' is supported in this script (VIPE backend removed).")
+        if self.depth_backend == "gt":
+            # Ground-truth depth backend: the camera path is fixed/GT, so per-frame scene
+            # depth is known. Mirror the DA3 branch's add-logic (stride filter, reliability
+            # mask, buffer_depth_latest bookkeeping) but read GT depth + GT poses instead of
+            # predicting. Only the frames that just entered history [new_start, end_px_idx)
+            # are considered; dedup against existing cache ids keeps it idempotent.
+            assert self.gt_depth is not None, "gt_depth is required for depth_backend='gt'"
+            H0 = int(self.history_frames.shape[-2])
+            W0 = int(self.history_frames.shape[-1])
+            stride = max(int(self.model.config.spatial_memory_stride), 1)
+            existing_ids = set(getattr(self.retrieval_cache, "_latent_indices", []))
+            step = int(self.model.framepack_num_new_video_frames)
+            new_start = max(0, int(end_px_idx) - step)
+            for f_abs in range(new_start, int(end_px_idx)):
+                depth_t = self.gt_depth[:, f_abs].to(self.cam_w2c.device, dtype=torch.float32)
+                if depth_t.dim() == 2:
+                    depth_t = depth_t.unsqueeze(0).unsqueeze(0)
+                elif depth_t.dim() == 3:
+                    depth_t = depth_t.unsqueeze(1)
+                if int(depth_t.shape[-2]) != H0 or int(depth_t.shape[-1]) != W0:
+                    depth_t = torch.nn.functional.interpolate(
+                        depth_t, size=(H0, W0), mode="bilinear", align_corners=False
+                    )
+                depth_rel = reliable_depth_mask_range_batch(depth_t, ratio_thresh=0.15)
+                if isinstance(depth_rel, (tuple, list)):
+                    depth_rel = depth_rel[0]
+                valid_mask_t = depth_rel.to(dtype=torch.float32, device=depth_t.device)
+
+                w2c_t = self.cam_w2c[:, f_abs].to(torch.float32)
+                K_t = self.intrinsics[:, f_abs].to(torch.float32)
+                if int(f_abs) == int(end_px_idx - 1):
+                    self.buffer_depth_latest = depth_t.detach()
+                    self.buffer_depth_latest_frame_idx = int(f_abs)
+                    self.buffer_mask_latest = valid_mask_t.detach()
+
+                if not getattr(self.args, "disable_cache_update", False):
+                    cache_id = (
+                        int(f_abs)
+                        if self.use_image_spatial
+                        else int((int(f_abs) + int(self.start_index)) // int(self.frames_per_latent))
+                    )
+                    if cache_id in existing_ids:
+                        continue
+                    if self.use_image_spatial and int(f_abs) != 0 and (int(f_abs) % int(stride) != 0):
+                        continue
+                    existing_ids.add(cache_id)
+                    self.retrieval_cache.add(
+                        depth_t, w2c_t, K_t, latent_index=int(cache_id), frame_id=int(f_abs)
+                    )
+            if self.args.offload:
+                self.buffer_depth_latest = self.buffer_depth_latest.cpu()
+                if self.buffer_mask_latest is not None:
+                    self.buffer_mask_latest = self.buffer_mask_latest.cpu()
+            return
+
+        raise ValueError(f"Only depth_backend='da3'/'gt' is supported in this script (VIPE backend removed).")
 
     def build_outputs(self, da3_gs_export_stem, log_prefix):
         video = self.history_frames[:, :, self.start_index:]
@@ -1256,6 +1319,7 @@ def run_lyra2_sample(
         vipe_input_dump_dir=vipe_input_dump_dir,
         vipe_input_dump_prefix=log_prefix,
         multiview_data=multiview_data,
+        gt_depth=data_batch["depth"] if getattr(args, "depth_backend", "da3") == "gt" else None,
     )
 
     num_frames = int(args.num_frames)
