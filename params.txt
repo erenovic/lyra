@@ -1,0 +1,319 @@
+# Lyra2.0 trained net: Lyra2WanModel
+# checkpoint: outputs/lyra2_v2/lyra_2/maze/lyra2_maze_selfaug/checkpoints/iter_000041500
+# total parameters:     243,647,504
+# trainable parameters: 243,647,504
+# frozen parameters:    0
+# num tensors:          311
+#
+# name                             	shape	numel	state
+patch_embedding.weight           	(1024, 36)	36864	train
+patch_embedding.bias             	(1024,)	1024	train
+time_embedding.0.weight          	(1024, 256)	262144	train
+time_embedding.0.bias            	(1024,)	1024	train
+time_embedding.2.weight          	(1024, 1024)	1048576	train
+time_embedding.2.bias            	(1024,)	1024	train
+time_projection.1.weight         	(6144, 1024)	6291456	train
+time_projection.1.bias           	(6144,)	6144	train
+blocks.0.modulation              	(1, 6, 1024)	6144	train
+blocks.0.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.0.self_attn.q.bias        	(1024,)	1024	train
+blocks.0.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.0.self_attn.k.bias        	(1024,)	1024	train
+blocks.0.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.0.self_attn.v.bias        	(1024,)	1024	train
+blocks.0.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.0.self_attn.o.bias        	(1024,)	1024	train
+blocks.0.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.0.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.0.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.0.ffn.0.bias              	(4096,)	4096	train
+blocks.0.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.0.ffn.2.bias              	(1024,)	1024	train
+blocks.0.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.0.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.0.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.1.modulation              	(1, 6, 1024)	6144	train
+blocks.1.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.1.self_attn.q.bias        	(1024,)	1024	train
+blocks.1.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.1.self_attn.k.bias        	(1024,)	1024	train
+blocks.1.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.1.self_attn.v.bias        	(1024,)	1024	train
+blocks.1.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.1.self_attn.o.bias        	(1024,)	1024	train
+blocks.1.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.1.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.1.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.1.ffn.0.bias              	(4096,)	4096	train
+blocks.1.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.1.ffn.2.bias              	(1024,)	1024	train
+blocks.1.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.1.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.1.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.2.modulation              	(1, 6, 1024)	6144	train
+blocks.2.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.2.self_attn.q.bias        	(1024,)	1024	train
+blocks.2.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.2.self_attn.k.bias        	(1024,)	1024	train
+blocks.2.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.2.self_attn.v.bias        	(1024,)	1024	train
+blocks.2.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.2.self_attn.o.bias        	(1024,)	1024	train
+blocks.2.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.2.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.2.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.2.ffn.0.bias              	(4096,)	4096	train
+blocks.2.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.2.ffn.2.bias              	(1024,)	1024	train
+blocks.2.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.2.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.2.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.3.modulation              	(1, 6, 1024)	6144	train
+blocks.3.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.3.self_attn.q.bias        	(1024,)	1024	train
+blocks.3.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.3.self_attn.k.bias        	(1024,)	1024	train
+blocks.3.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.3.self_attn.v.bias        	(1024,)	1024	train
+blocks.3.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.3.self_attn.o.bias        	(1024,)	1024	train
+blocks.3.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.3.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.3.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.3.ffn.0.bias              	(4096,)	4096	train
+blocks.3.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.3.ffn.2.bias              	(1024,)	1024	train
+blocks.3.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.3.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.3.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.4.modulation              	(1, 6, 1024)	6144	train
+blocks.4.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.4.self_attn.q.bias        	(1024,)	1024	train
+blocks.4.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.4.self_attn.k.bias        	(1024,)	1024	train
+blocks.4.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.4.self_attn.v.bias        	(1024,)	1024	train
+blocks.4.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.4.self_attn.o.bias        	(1024,)	1024	train
+blocks.4.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.4.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.4.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.4.ffn.0.bias              	(4096,)	4096	train
+blocks.4.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.4.ffn.2.bias              	(1024,)	1024	train
+blocks.4.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.4.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.4.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.5.modulation              	(1, 6, 1024)	6144	train
+blocks.5.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.5.self_attn.q.bias        	(1024,)	1024	train
+blocks.5.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.5.self_attn.k.bias        	(1024,)	1024	train
+blocks.5.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.5.self_attn.v.bias        	(1024,)	1024	train
+blocks.5.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.5.self_attn.o.bias        	(1024,)	1024	train
+blocks.5.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.5.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.5.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.5.ffn.0.bias              	(4096,)	4096	train
+blocks.5.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.5.ffn.2.bias              	(1024,)	1024	train
+blocks.5.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.5.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.5.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.6.modulation              	(1, 6, 1024)	6144	train
+blocks.6.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.6.self_attn.q.bias        	(1024,)	1024	train
+blocks.6.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.6.self_attn.k.bias        	(1024,)	1024	train
+blocks.6.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.6.self_attn.v.bias        	(1024,)	1024	train
+blocks.6.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.6.self_attn.o.bias        	(1024,)	1024	train
+blocks.6.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.6.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.6.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.6.ffn.0.bias              	(4096,)	4096	train
+blocks.6.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.6.ffn.2.bias              	(1024,)	1024	train
+blocks.6.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.6.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.6.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.7.modulation              	(1, 6, 1024)	6144	train
+blocks.7.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.7.self_attn.q.bias        	(1024,)	1024	train
+blocks.7.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.7.self_attn.k.bias        	(1024,)	1024	train
+blocks.7.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.7.self_attn.v.bias        	(1024,)	1024	train
+blocks.7.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.7.self_attn.o.bias        	(1024,)	1024	train
+blocks.7.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.7.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.7.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.7.ffn.0.bias              	(4096,)	4096	train
+blocks.7.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.7.ffn.2.bias              	(1024,)	1024	train
+blocks.7.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.7.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.7.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.8.modulation              	(1, 6, 1024)	6144	train
+blocks.8.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.8.self_attn.q.bias        	(1024,)	1024	train
+blocks.8.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.8.self_attn.k.bias        	(1024,)	1024	train
+blocks.8.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.8.self_attn.v.bias        	(1024,)	1024	train
+blocks.8.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.8.self_attn.o.bias        	(1024,)	1024	train
+blocks.8.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.8.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.8.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.8.ffn.0.bias              	(4096,)	4096	train
+blocks.8.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.8.ffn.2.bias              	(1024,)	1024	train
+blocks.8.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.8.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.8.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.9.modulation              	(1, 6, 1024)	6144	train
+blocks.9.self_attn.q.weight      	(1024, 1024)	1048576	train
+blocks.9.self_attn.q.bias        	(1024,)	1024	train
+blocks.9.self_attn.k.weight      	(1024, 1024)	1048576	train
+blocks.9.self_attn.k.bias        	(1024,)	1024	train
+blocks.9.self_attn.v.weight      	(1024, 1024)	1048576	train
+blocks.9.self_attn.v.bias        	(1024,)	1024	train
+blocks.9.self_attn.o.weight      	(1024, 1024)	1048576	train
+blocks.9.self_attn.o.bias        	(1024,)	1024	train
+blocks.9.self_attn.norm_q.weight 	(1024,)	1024	train
+blocks.9.self_attn.norm_k.weight 	(1024,)	1024	train
+blocks.9.ffn.0.weight            	(4096, 1024)	4194304	train
+blocks.9.ffn.0.bias              	(4096,)	4096	train
+blocks.9.ffn.2.weight            	(1024, 4096)	4194304	train
+blocks.9.ffn.2.bias              	(1024,)	1024	train
+blocks.9.cam_encoder.weight      	(1024, 384)	393216	train
+blocks.9.buffer_encoder.0.weight 	(256, 5120)	1310720	train
+blocks.9.buffer_encoder.1.weight 	(1024, 256)	262144	train
+blocks.10.modulation             	(1, 6, 1024)	6144	train
+blocks.10.self_attn.q.weight     	(1024, 1024)	1048576	train
+blocks.10.self_attn.q.bias       	(1024,)	1024	train
+blocks.10.self_attn.k.weight     	(1024, 1024)	1048576	train
+blocks.10.self_attn.k.bias       	(1024,)	1024	train
+blocks.10.self_attn.v.weight     	(1024, 1024)	1048576	train
+blocks.10.self_attn.v.bias       	(1024,)	1024	train
+blocks.10.self_attn.o.weight     	(1024, 1024)	1048576	train
+blocks.10.self_attn.o.bias       	(1024,)	1024	train
+blocks.10.self_attn.norm_q.weight	(1024,)	1024	train
+blocks.10.self_attn.norm_k.weight	(1024,)	1024	train
+blocks.10.ffn.0.weight           	(4096, 1024)	4194304	train
+blocks.10.ffn.0.bias             	(4096,)	4096	train
+blocks.10.ffn.2.weight           	(1024, 4096)	4194304	train
+blocks.10.ffn.2.bias             	(1024,)	1024	train
+blocks.10.cam_encoder.weight     	(1024, 384)	393216	train
+blocks.10.buffer_encoder.0.weight	(256, 5120)	1310720	train
+blocks.10.buffer_encoder.1.weight	(1024, 256)	262144	train
+blocks.11.modulation             	(1, 6, 1024)	6144	train
+blocks.11.self_attn.q.weight     	(1024, 1024)	1048576	train
+blocks.11.self_attn.q.bias       	(1024,)	1024	train
+blocks.11.self_attn.k.weight     	(1024, 1024)	1048576	train
+blocks.11.self_attn.k.bias       	(1024,)	1024	train
+blocks.11.self_attn.v.weight     	(1024, 1024)	1048576	train
+blocks.11.self_attn.v.bias       	(1024,)	1024	train
+blocks.11.self_attn.o.weight     	(1024, 1024)	1048576	train
+blocks.11.self_attn.o.bias       	(1024,)	1024	train
+blocks.11.self_attn.norm_q.weight	(1024,)	1024	train
+blocks.11.self_attn.norm_k.weight	(1024,)	1024	train
+blocks.11.ffn.0.weight           	(4096, 1024)	4194304	train
+blocks.11.ffn.0.bias             	(4096,)	4096	train
+blocks.11.ffn.2.weight           	(1024, 4096)	4194304	train
+blocks.11.ffn.2.bias             	(1024,)	1024	train
+blocks.11.cam_encoder.weight     	(1024, 384)	393216	train
+blocks.11.buffer_encoder.0.weight	(256, 5120)	1310720	train
+blocks.11.buffer_encoder.1.weight	(1024, 256)	262144	train
+blocks.12.modulation             	(1, 6, 1024)	6144	train
+blocks.12.self_attn.q.weight     	(1024, 1024)	1048576	train
+blocks.12.self_attn.q.bias       	(1024,)	1024	train
+blocks.12.self_attn.k.weight     	(1024, 1024)	1048576	train
+blocks.12.self_attn.k.bias       	(1024,)	1024	train
+blocks.12.self_attn.v.weight     	(1024, 1024)	1048576	train
+blocks.12.self_attn.v.bias       	(1024,)	1024	train
+blocks.12.self_attn.o.weight     	(1024, 1024)	1048576	train
+blocks.12.self_attn.o.bias       	(1024,)	1024	train
+blocks.12.self_attn.norm_q.weight	(1024,)	1024	train
+blocks.12.self_attn.norm_k.weight	(1024,)	1024	train
+blocks.12.ffn.0.weight           	(4096, 1024)	4194304	train
+blocks.12.ffn.0.bias             	(4096,)	4096	train
+blocks.12.ffn.2.weight           	(1024, 4096)	4194304	train
+blocks.12.ffn.2.bias             	(1024,)	1024	train
+blocks.12.cam_encoder.weight     	(1024, 384)	393216	train
+blocks.12.buffer_encoder.0.weight	(256, 5120)	1310720	train
+blocks.12.buffer_encoder.1.weight	(1024, 256)	262144	train
+blocks.13.modulation             	(1, 6, 1024)	6144	train
+blocks.13.self_attn.q.weight     	(1024, 1024)	1048576	train
+blocks.13.self_attn.q.bias       	(1024,)	1024	train
+blocks.13.self_attn.k.weight     	(1024, 1024)	1048576	train
+blocks.13.self_attn.k.bias       	(1024,)	1024	train
+blocks.13.self_attn.v.weight     	(1024, 1024)	1048576	train
+blocks.13.self_attn.v.bias       	(1024,)	1024	train
+blocks.13.self_attn.o.weight     	(1024, 1024)	1048576	train
+blocks.13.self_attn.o.bias       	(1024,)	1024	train
+blocks.13.self_attn.norm_q.weight	(1024,)	1024	train
+blocks.13.self_attn.norm_k.weight	(1024,)	1024	train
+blocks.13.ffn.0.weight           	(4096, 1024)	4194304	train
+blocks.13.ffn.0.bias             	(4096,)	4096	train
+blocks.13.ffn.2.weight           	(1024, 4096)	4194304	train
+blocks.13.ffn.2.bias             	(1024,)	1024	train
+blocks.13.cam_encoder.weight     	(1024, 384)	393216	train
+blocks.13.buffer_encoder.0.weight	(256, 5120)	1310720	train
+blocks.13.buffer_encoder.1.weight	(1024, 256)	262144	train
+blocks.14.modulation             	(1, 6, 1024)	6144	train
+blocks.14.self_attn.q.weight     	(1024, 1024)	1048576	train
+blocks.14.self_attn.q.bias       	(1024,)	1024	train
+blocks.14.self_attn.k.weight     	(1024, 1024)	1048576	train
+blocks.14.self_attn.k.bias       	(1024,)	1024	train
+blocks.14.self_attn.v.weight     	(1024, 1024)	1048576	train
+blocks.14.self_attn.v.bias       	(1024,)	1024	train
+blocks.14.self_attn.o.weight     	(1024, 1024)	1048576	train
+blocks.14.self_attn.o.bias       	(1024,)	1024	train
+blocks.14.self_attn.norm_q.weight	(1024,)	1024	train
+blocks.14.self_attn.norm_k.weight	(1024,)	1024	train
+blocks.14.ffn.0.weight           	(4096, 1024)	4194304	train
+blocks.14.ffn.0.bias             	(4096,)	4096	train
+blocks.14.ffn.2.weight           	(1024, 4096)	4194304	train
+blocks.14.ffn.2.bias             	(1024,)	1024	train
+blocks.14.cam_encoder.weight     	(1024, 384)	393216	train
+blocks.14.buffer_encoder.0.weight	(256, 5120)	1310720	train
+blocks.14.buffer_encoder.1.weight	(1024, 256)	262144	train
+blocks.15.modulation             	(1, 6, 1024)	6144	train
+blocks.15.self_attn.q.weight     	(1024, 1024)	1048576	train
+blocks.15.self_attn.q.bias       	(1024,)	1024	train
+blocks.15.self_attn.k.weight     	(1024, 1024)	1048576	train
+blocks.15.self_attn.k.bias       	(1024,)	1024	train
+blocks.15.self_attn.v.weight     	(1024, 1024)	1048576	train
+blocks.15.self_attn.v.bias       	(1024,)	1024	train
+blocks.15.self_attn.o.weight     	(1024, 1024)	1048576	train
+blocks.15.self_attn.o.bias       	(1024,)	1024	train
+blocks.15.self_attn.norm_q.weight	(1024,)	1024	train
+blocks.15.self_attn.norm_k.weight	(1024,)	1024	train
+blocks.15.ffn.0.weight           	(4096, 1024)	4194304	train
+blocks.15.ffn.0.bias             	(4096,)	4096	train
+blocks.15.ffn.2.weight           	(1024, 4096)	4194304	train
+blocks.15.ffn.2.bias             	(1024,)	1024	train
+blocks.15.cam_encoder.weight     	(1024, 384)	393216	train
+blocks.15.buffer_encoder.0.weight	(256, 5120)	1310720	train
+blocks.15.buffer_encoder.1.weight	(1024, 256)	262144	train
+head.modulation                  	(1, 2, 1024)	2048	train
+head.head.weight                 	(16, 1024)	16384	train
+head.head.bias                   	(16,)	16	train
+clean_patch_embeddings.0.weight  	(1024, 36)	36864	train
+clean_patch_embeddings.0.bias    	(1024,)	1024	train
+clean_patch_embeddings.1.weight  	(1024, 144)	147456	train
+clean_patch_embeddings.1.bias    	(1024,)	1024	train
+clean_patch_embeddings.2.weight  	(1024, 36)	36864	train
+clean_patch_embeddings.2.bias    	(1024,)	1024	train
+clean_patch_embeddings.3.weight  	(1024, 2304)	2359296	train
+clean_patch_embeddings.3.bias    	(1024,)	1024	train
+clean_patch_embeddings.4.weight  	(1024, 288)	294912	train
+clean_patch_embeddings.4.bias    	(1024,)	1024	train
+clean_patch_embeddings.5.weight  	(1024, 36)	36864	train
+clean_patch_embeddings.5.bias    	(1024,)	1024	train
