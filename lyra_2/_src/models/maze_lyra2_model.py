@@ -7,7 +7,9 @@ Writes one row-stacked frame grid per validation sample and returns a generated-
 MSE as the validation loss so the trainer's ``validate()`` contract
 (``output_batch, loss = model.validation_step(...)``) holds.
 
-Grid rows (top to bottom; frames are the generated region of the sampled window):
+Grid rows (top to bottom; columns are ALL generated frames of the sampled window -- 12 at the
+g3 framepack. The generation tail is decoded with a short re-encoded GT-history context so all
+12 px frames come back aligned; a standalone decode of the 3-latent chunk would yield only 9):
   gt          window-aligned GT pixels (``_latest_gt_gen_pixels``; the window start/segment
               are random, so the full-clip tail is NOT the right reference)
   gen         decoded generation
@@ -17,6 +19,10 @@ Grid rows (top to bottom; frames are the generated region of the sampled window)
   warp_depth  buffer warp's rendered depth (normalized; holes = 0)
   gt_depth    dataset metric depth at the generated frames' absolute indices
   ray_dir     plucker ray-direction condition
+  slots       retrieved spatial-slot GT frames in the first columns (color-bordered, frame-id
+              labeled; gray tile = left-padding, i.e. no retrieval for that slot)
+  topdown     top-down maze map per generated frame (trajectory so far + agent glyph), with the
+              retrieved slot cameras ringed in the matching slot colors
 
 Sample grids land in ``$LYRA_VAL_SAMPLE_DIR`` (exported by ``lyra_2/train.py`` as
 ``<job.path_local>/val_samples``; falls back to ``./val_samples``). Rank 0 writes only.
@@ -29,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 
 from lyra_2._ext.imaginaire.utils import distributed, log
 from lyra_2._src.models.lyra2_model import Lyra2Model
@@ -39,6 +46,76 @@ VAL_NUM_STEPS = 15
 VAL_GUIDANCE = 1.5
 VAL_SEED = 0
 MAX_SPATIAL_ROWS = 2  # cap per-slot warp rows so the grid stays readable
+
+# Per-slot colors, kept identical to sample_maze.py's SLOT_COLORS so validation grids and
+# rollout videos read the same: slot 0 = red, 1 = green, 2 = blue.
+SLOT_COLORS = [(230, 60, 60), (60, 200, 60), (60, 120, 240)]
+
+
+def _slot_tiles(video_b3thw: torch.Tensor, slot_ids: list[int], n_real: int, t: int) -> np.ndarray:
+    """(t,H,W,3) slots row: one GT frame per retrieved slot, color-bordered and id-labeled.
+
+    Slot ids are LEFT-padded (lyra2_model pads with the window's first frame id), so slot k is
+    real iff ``k >= len(slot_ids) - n_real``; padding renders as a gray placeholder. Columns
+    beyond the slot count stay black.
+    """
+    H, W = int(video_b3thw.shape[-2]), int(video_b3thw.shape[-1])
+    out = np.zeros((t, H, W, 3), dtype=np.uint8)
+    for k, fid in enumerate(slot_ids[:t]):
+        color = SLOT_COLORS[k % len(SLOT_COLORS)]
+        if k < len(slot_ids) - n_real:
+            tile = np.full((H, W, 3), 96, dtype=np.uint8)  # gray placeholder
+            label = "--"
+        else:
+            v = video_b3thw[0, :, int(fid)].permute(1, 2, 0).float().clamp(-1, 1)
+            tile = ((v + 1.0) * 127.5).round().to(torch.uint8).cpu().numpy()
+            label = str(int(fid))
+        img = Image.fromarray(tile)
+        d = ImageDraw.Draw(img)
+        d.rectangle([0, 0, W - 1, H - 1], outline=color, width=2)
+        d.text((2, 1), label, fill=(0, 0, 0))  # dark backing for legibility
+        d.text((3, 2), label, fill=color)
+        out[k] = np.array(img)
+    return out
+
+
+def _topdown_row(
+    maze_layout: np.ndarray,
+    agent_pos: np.ndarray,
+    agent_dir: np.ndarray,
+    gen_idx: list[int],
+    slot_ids: list[int],
+    n_real: int,
+    size: int,
+) -> np.ndarray:
+    """(len(gen_idx),size,size,3) top-down map at each generated frame, slot cameras ringed.
+
+    Uses the same ``src.visualization.topdown_maze_map.topdown_video`` renderer as
+    ``sample_maze.py`` (parent-repo import resolved lazily; callers wrap in try/except).
+    """
+    import sys
+
+    root = Path(__file__).resolve().parents[6]  # the MemoryKrea repo root
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from src.visualization.topdown_maze_map import topdown_video
+
+    gen_idx = [int(i) for i in gen_idx]
+    last = max(gen_idx)
+    hl = None
+    if slot_ids and n_real > 0:
+        # -1 marks left-padding; topdown_video skips negatives, keeping slot-color alignment.
+        marks = [int(s) if k >= len(slot_ids) - n_real else -1 for k, s in enumerate(slot_ids)]
+        hl = [marks] * (last + 1)
+    td = topdown_video(
+        maze_layout,
+        agent_pos[: last + 1],
+        agent_dir[: last + 1],
+        size=size,
+        highlight_indices_per_frame=hl,
+        highlight_colors=SLOT_COLORS,
+    )  # (last+1, 3, size, size) uint8
+    return td[gen_idx].transpose(0, 2, 3, 1)
 
 
 def _to_uint8(video_b3thw: torch.Tensor) -> np.ndarray:
@@ -138,6 +215,10 @@ class MazeLyra2Model(Lyra2Model):
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         # Snapshot before the model mutates the batch; needed to align GT depth to the window.
         gt_depth_full = data_batch.get("depth", None)  # (B,T,1,H,W) metric
+        gt_video_full = data_batch["video"]  # (B,3,N,H,W); slot tiles + context decode read it
+        agent_pos = data_batch.get("agent_pos", None)  # (B,N,2) maze-cell xy
+        agent_dir = data_batch.get("agent_dir", None)  # (B,N,2) unit heading
+        maze_layout = data_batch.get("maze_layout", None)  # (B,15,15) wall grid
 
         out = self.generate_samples_from_batch(
             data_batch,
@@ -162,11 +243,38 @@ class MazeLyra2Model(Lyra2Model):
         warp_depth = getattr(self, "_latest_condition_state_depth", None)  # (B,1,F,H,W) [-1,1]
         spatial_depth = getattr(self, "_latest_spatial_warped_depth", None)  # (B,N,F,H,W) [-1,1]
         gen_idx = getattr(self, "_latest_gt_gen_indices", None)  # (T_gen,) absolute frame ids
+        # Padded slot frame ids + how many are real retrievals (left-padding uses frame ids too,
+        # so the count is the only way to tell a genuine frame-0 retrieval from padding).
+        slot_ids_val = list(getattr(self, "_latest_spatial_slot_ids", None) or [])
+        slot_real = int(getattr(self, "_latest_spatial_retrieved_count", 0) or 0)
         self._latest_condition_state_depth = None
         self._latest_spatial_warped_depth = None
         self._latest_gt_gen_indices = None
+        self._latest_spatial_slot_ids = None
+        self._latest_spatial_retrieved_count = None
 
-        frames = self.decode(latents)  # (B,3,T_gen,H,W) in [-1,1]
+        # Decode WITH a short re-encoded GT-history context so all framepack_num_new_video_frames
+        # (12 at g3) generated px frames come back aligned: a standalone decode of the 3-latent
+        # chunk treats gen latent 0 as an I-latent and yields only 1+2*4=9 frames, the first of
+        # them ~3 px frames early. Mirrors the self-aug stage's stitch decode (lyra2_model.py).
+        frames = None
+        F_new = int(self.framepack_num_new_video_frames)
+        if gen_idx is not None and int(gen_idx[0]) > 0:
+            try:
+                ctx_px = min(9, int(gen_idx[0]))  # 9 px frames -> 3 context latents
+                ctx_px = 1 + ((ctx_px - 1) // 4) * 4  # snap to the causal VAE's 1+4k grid
+                s0 = int(gen_idx[0]) - ctx_px
+                ctx = gt_video_full[:, :, s0 : s0 + ctx_px].to(
+                    device=latents.device, dtype=self.tensor_kwargs["dtype"]
+                )
+                ctx_lat = self.encode(ctx)
+                frames = self.decode(torch.cat([ctx_lat, latents.to(ctx_lat.dtype)], dim=2))
+                frames = frames[:, :, -F_new:]
+            except Exception as e:  # noqa: BLE001 -- alignment nicety; plain decode still works
+                log.info(f"[val] context decode failed ({e}); falling back to plain decode")
+                frames = None
+        if frames is None:
+            frames = self.decode(latents)  # (B,3,T_gen,H,W) in [-1,1]
 
         # Val loss: pixel MSE vs the WINDOW-ALIGNED GT (the window start/segment are random,
         # so data_batch["video"]'s tail is generally the wrong reference).
@@ -208,7 +316,29 @@ class MazeLyra2Model(Lyra2Model):
                 d = gt_depth_full[0, idx, 0]  # (t,H,W) metric
                 rows.append(("gt_depth", _metric_depth_to_uint8(d)))
 
-            col = np.linspace(0, t - 1, min(8, t)).astype(int)
+            if slot_ids_val:
+                rows.append(("slots", _slot_tiles(gt_video_full, slot_ids_val, slot_real, t)))
+
+            if agent_pos is not None and agent_dir is not None and gen_idx is not None:
+                try:
+                    layout_np = maze_layout[0].cpu().numpy() if maze_layout is not None else None
+                    rows.append((
+                        "topdown",
+                        _topdown_row(
+                            layout_np,
+                            agent_pos[0].cpu().numpy(),
+                            agent_dir[0].cpu().numpy(),
+                            gen_idx[-t:].tolist(),
+                            slot_ids_val,
+                            slot_real,
+                            size=int(gt.shape[-2]),
+                        ),
+                    ))
+                except Exception as e:  # noqa: BLE001 -- topdown row is best-effort viz
+                    log.info(f"[val] topdown row skipped: {e}")
+
+            # ALL generated frames as columns (12 at the g3 framepack) -- no subsampling.
+            col = np.arange(t)
             grid = np.concatenate([np.concatenate(list(r[col]), axis=1) for _, r in rows], axis=0)
             key = data_batch.get("__key__", ["sample"])
             key = key[0] if isinstance(key, (list, tuple)) else str(key)

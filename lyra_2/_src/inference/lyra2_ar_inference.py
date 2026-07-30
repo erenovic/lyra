@@ -432,6 +432,8 @@ class Lyra2InferencePipeline:
         self.merge_history_buffers = False
         self.num_retrieval_views: int = int(getattr(args, "num_retrieval_views", 1))
         self.warp_video_collect: List[torch.Tensor] = []
+        # Per-AR-step retrieved spatial slots (for visualization): (padded_len3_ids, real_count).
+        self.spatial_slot_ids_collect: List[Tuple[List[int], int]] = []
         self.vipe_input_dump_dir = vipe_input_dump_dir
         self.vipe_input_dump_prefix = vipe_input_dump_prefix
 
@@ -603,6 +605,7 @@ class Lyra2InferencePipeline:
 
         # Warp video collect.
         snap["warp_video_collect_len"] = len(self.warp_video_collect)
+        snap["spatial_slot_ids_collect_len"] = len(self.spatial_slot_ids_collect)
 
         # Predicted-pose state.
         snap["_predicted_pose_last_w2c"] = (
@@ -666,6 +669,7 @@ class Lyra2InferencePipeline:
 
         # Warp video collect.
         self.warp_video_collect = self.warp_video_collect[: snap["warp_video_collect_len"]]
+        self.spatial_slot_ids_collect = self.spatial_slot_ids_collect[: snap["spatial_slot_ids_collect_len"]]
 
         # Predicted-pose state.
         self._predicted_pose_last_w2c = snap["_predicted_pose_last_w2c"]
@@ -778,6 +782,14 @@ class Lyra2InferencePipeline:
                 if int(warp_pixels.shape[1]) > 3:
                     warp_pixels = warp_pixels[:, :3]
             self.warp_video_collect.append(warp_pixels.detach().float().cpu())
+            # Kept 1:1 with warp_video_collect: which frames were retrieved as the spatial slots
+            # this step (for visualization). Falls back to all-padding if the model has none.
+            _slot_ids = getattr(self.model, "_latest_spatial_slot_ids", None)
+            _slot_cnt = getattr(self.model, "_latest_spatial_retrieved_count", None)
+            if _slot_ids is not None:
+                self.spatial_slot_ids_collect.append(([int(x) for x in _slot_ids], int(_slot_cnt or 0)))
+            else:
+                self.spatial_slot_ids_collect.append(([-1] * int(self.model.framepack_num_spatial_hist), 0))
         history_window = latents_full[:, :, : -T_new_lat]
 
         self._restore_model_to_gpu()
@@ -1257,8 +1269,17 @@ class Lyra2InferencePipeline:
         warp_out = warp_video.float().cpu() if warp_video is not None else None
         warp_out_merged = None
 
+        # Per-AR-step retrieved spatial slot ids -> (num_steps, n_slots) int64; -1 = padding/no-retrieval.
+        # arr[s, k] is an absolute frame id into video_out's frame axis (0 = seed) for slot k at step s.
+        n_slots = int(self.model.framepack_num_spatial_hist)
+        slot_ids_arr = np.full((len(self.spatial_slot_ids_collect), n_slots), -1, dtype=np.int64)
+        for s, (ids, cnt) in enumerate(self.spatial_slot_ids_collect):
+            pad = max(0, n_slots - int(cnt))  # left-padded (placeholder) positions
+            for k in range(n_slots):
+                slot_ids_arr[s, k] = -1 if k < pad else int(ids[k])
+
         del self.history_frames, self.history_latents, self.enc_feat_cache, self.dec_feat_cache
-        del self.warp_video_collect
+        del self.warp_video_collect, self.spatial_slot_ids_collect
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -1266,6 +1287,7 @@ class Lyra2InferencePipeline:
             "video": video_out,
             "warp_video": warp_out,
             "warp_video_merged": warp_out_merged,
+            "spatial_slot_ids": slot_ids_arr,
             "use_pose": self.use_pose,
             "use_plucker": self.use_plucker,
         }
