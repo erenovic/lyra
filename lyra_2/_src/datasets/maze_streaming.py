@@ -69,12 +69,24 @@ def _build_intrinsics(num_frames: int, height: int, width: int, fov_vertical_deg
     return K.unsqueeze(0).expand(num_frames, 3, 3).contiguous()
 
 
-def _agent_pose_to_c2w(agent_pos: np.ndarray, agent_dir: np.ndarray, eye_height: float) -> torch.Tensor:
+def _agent_pose_to_c2w(
+    agent_pos: np.ndarray, agent_dir: np.ndarray, eye_height: float, pitch_deg: float = 0.0
+) -> torch.Tensor:
     """Build (T, 4, 4) c2w from Memory Maze agent state.
 
     Maze (x, y) floor -> y-up world (x, eye_height, -y); camera basis (right, down,
     forward); frame-0 rebased so c2w[0] = I. See src/data/dataset_maze.py for the
     full derivation and handedness rationale.
+
+    Args:
+        pitch_deg: Constant downward tilt of the camera, in degrees. The Memory-Maze
+            egocentric camera is rigidly mounted 5.71 deg (= atan(0.1)) below horizontal
+            (``zaxis = (0, -0.995, 0.0995)``, ``camera_control=False``), and the depth
+            renderer bakes that tilt into the depth maps. A level pose (0.0) therefore
+            disagrees with the data and hinges every unprojected point cloud upward by
+            this angle. Defaults to 0.0 so the level construction is still reachable
+            (and so the parity check against ``src.data.camera_geometry`` still holds);
+            :class:`MazeLyraDataset` passes the real tilt.
     """
     T = agent_pos.shape[0]
 
@@ -91,7 +103,14 @@ def _agent_pose_to_c2w(agent_pos: np.ndarray, agent_dir: np.ndarray, eye_height:
     up = torch.tensor([0.0, 1.0, 0.0]).expand(T, 3)
     right = torch.cross(forward, up, dim=-1)
     right = right / right.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-    down = torch.cross(forward, right, dim=-1)  # = -up for level camera
+    down = torch.cross(forward, right, dim=-1)  # = -up for a level camera
+
+    if pitch_deg:
+        # Rotate the optical axis down about the camera's own right axis, matching the depth
+        # renderer's basis
+        cp = math.cos(math.radians(float(pitch_deg)))
+        sp = math.sin(math.radians(float(pitch_deg)))
+        forward, down = cp * forward + sp * down, -sp * forward + cp * down
 
     R_c2w = torch.stack([right, down, forward], dim=-1)  # (T, 3, 3)
     c2w = torch.zeros(T, 4, 4, dtype=torch.float32)
@@ -156,6 +175,7 @@ class MazeLyraDataset(IterableDataset):
         width: int = 64,
         fov_vertical_deg: float = 80.0,
         eye_height: float = 0.45,
+        camera_pitch_deg: float = 5.71,
         t5_embedding_path: str = _DEFAULT_T5_PATH,
         fps: int = 24,
         shuffle_buffer: int = 50,
@@ -168,6 +188,12 @@ class MazeLyraDataset(IterableDataset):
         self.height, self.width = int(height), int(width)
         self.fov_vertical_deg = float(fov_vertical_deg)
         self.eye_height = float(eye_height)
+
+        # 5.71 (= atan(0.1)) is the camera's TRUE downward mount tilt and matches the depth
+        # renderer (REPORT.md section 10; GT reprojection inliers 0.99 vs 0.78 level). Pass 0.0
+        # only when serving checkpoints that were fitted on the old level poses.
+        self.camera_pitch_deg = float(camera_pitch_deg)
+
         self.t5_embedding_path = str(t5_embedding_path)
         self.fps = int(fps)
         self.shuffle_buffer = int(shuffle_buffer)
@@ -212,7 +238,9 @@ class MazeLyraDataset(IterableDataset):
             video = torch.from_numpy(img[sl].copy()).permute(3, 0, 1, 2).contiguous()  # (3,N,H,W)
             video = video.float().div_(127.5).sub_(1.0)  # [-1, 1]
 
-            c2w = _agent_pose_to_c2w(pos[sl], head[sl], eye_height=self.eye_height)  # (N,4,4)
+            c2w = _agent_pose_to_c2w(
+                pos[sl], head[sl], eye_height=self.eye_height, pitch_deg=self.camera_pitch_deg
+            )  # (N,4,4)
             w2c = torch.linalg.inv(c2w)
 
             d = dep[sl].astype(np.float32)
@@ -229,6 +257,10 @@ class MazeLyraDataset(IterableDataset):
                 # consumes camera_w2c / intrinsics.
                 "agent_pos": torch.from_numpy(pos[sl].astype(np.float32).copy()),  # (N, 2) maze-cell xy
                 "agent_dir": torch.from_numpy(head[sl].astype(np.float32).copy()),  # (N, 2) unit heading
+                # Wall grid (episode-constant), so the top-down map can draw walls
+                "maze_layout": torch.from_numpy(
+                    np.load(io.BytesIO(sample["maze_layout.npy"])).astype(np.uint8).copy()
+                ),  # (15, 15)
                 "is_preprocessed": True,
                 "t5_text_embeddings": emb.clone(),  # (512, 4096) constant (no captions)
                 "t5_text_mask": torch.ones(512),
@@ -328,8 +360,25 @@ if __name__ == "__main__":
         ang = np.random.default_rng(1).uniform(-np.pi, np.pi, 8)
         head = np.stack([np.cos(ang), np.sin(ang)], -1).astype(np.float32)
         assert torch.equal(ref_K(8, 64, 64, 80.0), _build_intrinsics(8, 64, 64, 80.0))
+        # Parity holds only at pitch_deg=0: the host repo's helper still builds a LEVEL camera,
+        # which disagrees with the depth renderer's 5.71 deg downward mount tilt (REPORT.md
+        # section 10). This loader corrects it; src/data/camera_geometry.py has not been changed.
         assert torch.equal(ref_pose(pos, head, eye_height=0.45), _agent_pose_to_c2w(pos, head, eye_height=0.45))
-        print("PASS: geometry parity with src.data.dataset_maze")
+        pitched = _agent_pose_to_c2w(pos, head, eye_height=0.45, pitch_deg=5.71)
+        level = _agent_pose_to_c2w(pos, head, eye_height=0.45)
+        assert not torch.allclose(pitched, level, atol=1e-3), "pitch_deg had no effect"
+        # The tilt must be a pure rotation about the camera's own right axis, so the basis stays
+        # orthonormal and right-handed and the eye position is untouched.
+        R = pitched[:, :3, :3]
+        assert torch.allclose(R @ R.transpose(1, 2), torch.eye(3).expand(R.shape[0], 3, 3), atol=1e-5)
+        assert torch.allclose(torch.linalg.det(R), torch.ones(R.shape[0]), atol=1e-5)
+        # Eye positions are rebased into frame 0's (now tilted) camera frame, so the translation
+        # vectors rotate; what must not change is their length -- the tilt is a rotation about the
+        # eye, not a displacement of it.
+        assert torch.allclose(
+            pitched[:, :3, 3].norm(dim=-1), level[:, :3, 3].norm(dim=-1), atol=1e-4
+        ), "pitch changed camera positions"
+        print("PASS: geometry parity with src.data.dataset_maze (at pitch_deg=0) + pitch sanity")
     except ImportError as e:
         print(f"parity check skipped (host repo not importable): {e}")
 

@@ -144,7 +144,8 @@ def run_sweep(args, device: str) -> None:
         thresholds.append(None if tok in ("off", "none", "raw", "inf") else float(tok))
 
     ds = MazeLyraDataset(
-        [args.eval_root], num_frames=args.num_frames, stage="eval", resampled=False, seed=args.seed
+        [args.eval_root], num_frames=args.num_frames, stage="eval", resampled=False, seed=args.seed,
+        camera_pitch_deg=args.camera_pitch_deg,
     )
     dl = build_maze_dataloader(ds, batch_size=1, num_workers=0)
     it = iter(dl)
@@ -223,7 +224,8 @@ def run_retrieval_render(args, device: str) -> None:
     downsample, num_slots, thr = int(args.rr_downsample), int(args.rr_slots), float(args.rr_render_thresh)
 
     ds = MazeLyraDataset(
-        [args.eval_root], num_frames=args.num_frames, stage="eval", resampled=False, seed=args.seed
+        [args.eval_root], num_frames=args.num_frames, stage="eval", resampled=False, seed=args.seed,
+        camera_pitch_deg=args.camera_pitch_deg,
     )
     dl = build_maze_dataloader(ds, batch_size=1, num_workers=0)
     it = iter(dl)
@@ -328,6 +330,13 @@ def main() -> None:
     ap.add_argument("--src-frame", type=int, default=40, help="Source frame index within the clip.")
     ap.add_argument("--target-offsets", default="1,2,4,8", help="Comma-separated target offsets from src.")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument(
+        "--camera-pitch-deg",
+        type=float,
+        default=5.71,
+        help="Camera downward mount tilt baked into the poses (0.0 = the old level camera). "
+        "This eval blessed the geometry as sound while the tilt was missing; see REPORT.md 10.",
+    )
     ap.add_argument("--out", default="outputs/eval_warp_geometry")
     ap.add_argument(
         "--no-clean",
@@ -370,7 +379,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ds = MazeLyraDataset(
-        [args.eval_root], num_frames=args.num_frames, stage="eval", resampled=False, seed=args.seed
+        [args.eval_root], num_frames=args.num_frames, stage="eval", resampled=False, seed=args.seed,
+        camera_pitch_deg=args.camera_pitch_deg,
     )
     dl = build_maze_dataloader(ds, batch_size=1, num_workers=0)
     it = iter(dl)

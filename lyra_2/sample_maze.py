@@ -116,6 +116,14 @@ def main() -> None:
         "ceil((n-1)/frames_per_segment) segments (1 segment = 20 frames). Capped by clip length.",
     )
     ap.add_argument("--num-scenes", type=int, default=2)
+    ap.add_argument(
+        "--camera-pitch-deg",
+        type=float,
+        default=5.71,
+        help="Camera downward mount tilt baked into the poses. 5.71 (= atan(0.1)) is the camera's "
+        "true tilt and matches checkpoints trained from 2026-07-30 on; pass 0.0 to evaluate the "
+        "older level-pose checkpoints.",
+    )
     ap.add_argument("--num-steps", type=int, default=35, help="diffusion sampling steps per chunk")
     ap.add_argument("--shift", type=float, default=5.0, help="flow-match scheduler shift")
     # CFG is inert for this config: disable_cross_attn removes the text/CLIP branch, so the
