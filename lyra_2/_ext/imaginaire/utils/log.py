@@ -72,6 +72,7 @@ def init_loguru_file(path: str) -> None:
     # torchrun for every worker, so this is correct even before torch.distributed is initialized.
     if int(os.environ.get("RANK", "0")) != 0:
         return
+
     datetime_format = get_datetime_format()
     machine_format = get_machine_format()
     message_format = get_message_format()

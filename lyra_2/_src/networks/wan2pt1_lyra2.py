@@ -87,6 +87,7 @@ class Lyra2AttentionBlock(nn.Module):
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
         self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps, cp_comm_type)
+
         # Cross-attention (text/CLIP context) is dropped entirely when disabled -- no useful
         # text/image signal on maze, so we save the params and compute.
         if self.disable_cross_attn:
@@ -97,6 +98,7 @@ class Lyra2AttentionBlock(nn.Module):
             self.cross_attn = WAN_CROSSATTENTION_CLASSES[cross_attn_type](
                 dim, num_heads, (-1, -1), qk_norm, eps, cp_comm_type
             )
+
         self.norm2 = WanLayerNorm(dim, eps)
         self.ffn = nn.Sequential(nn.Linear(dim, ffn_dim), nn.GELU(approximate="tanh"), nn.Linear(ffn_dim, dim))
 
@@ -124,11 +126,13 @@ class Lyra2AttentionBlock(nn.Module):
 
     def init_weights(self):
         self.self_attn.init_weights()
+
         if self.cross_attn is not None:
             self.cross_attn.init_weights()
 
         self.norm1.reset_parameters()
         self.norm2.reset_parameters()
+
         if self.norm3 is not None:
             self.norm3.reset_parameters()
 
@@ -212,8 +216,10 @@ class Lyra2AttentionBlock(nn.Module):
 
         # cross-attn + ffn (same as base)
         def cross_attn_ffn(x, context, context_lens, e):
+
             if self.cross_attn is not None:
                 x = x + self.cross_attn(self.norm3(x), context, context_lens)
+
             y = self.ffn((self.norm2(x).float() * (1 + e[4]) + e[3]).type_as(x))
             with amp.autocast("cuda", dtype=torch.float32):
                 x = x + y * e[5].type_as(x)
@@ -884,6 +890,7 @@ class Lyra2WanModel(WeightTrainingStat):
             else:
                 if crossattn_emb.dim() == 4:
                     crossattn_emb = crossattn_emb.squeeze(1)
+
                 context_B_L_D = self.text_embedding(crossattn_emb)
                 if frame_cond_crossattn_emb_B_L_D is not None:
                     context_clip = self.img_emb(frame_cond_crossattn_emb_B_L_D)
@@ -989,6 +996,7 @@ class Lyra2WanModel(WeightTrainingStat):
         else:
             if crossattn_emb.dim() == 4:
                 crossattn_emb = crossattn_emb.squeeze(1)
+
             context_B_L_D = self.text_embedding(crossattn_emb)
             if frame_cond_crossattn_emb_B_L_D is not None:
                 context_clip = self.img_emb(frame_cond_crossattn_emb_B_L_D)
@@ -1089,8 +1097,10 @@ class Lyra2WanModel(WeightTrainingStat):
         for i, block in enumerate(self.blocks):
             fully_shard(block, mesh=mesh, reshard_after_forward=True, **fsdp_kwargs)
         fully_shard(self.head, mesh=mesh, reshard_after_forward=False, **fsdp_kwargs)
+
         if self.text_embedding is not None:
             fully_shard(self.text_embedding, mesh=mesh, reshard_after_forward=True, **fsdp_kwargs)
+
         fully_shard(self.time_embedding, mesh=mesh, reshard_after_forward=True, **fsdp_kwargs)
         fully_shard(self.patch_embedding, mesh=mesh, reshard_after_forward=True, **fsdp_kwargs)
         fully_shard(self.time_projection, mesh=mesh, reshard_after_forward=True, **fsdp_kwargs)

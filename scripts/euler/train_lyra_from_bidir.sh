@@ -19,7 +19,7 @@
 # CHECK THE FIRST LAUNCH -- the .pth loader only logs, it never raises. Expect in the rank-0 log:
 #   "Resuming ckpt <abs>.pth"      (a DIRECTORY path means the transfer was ignored)
 #   _IncompatibleKeys(...)          unexpected_keys and incorrect_shapes MUST both be empty
-#   "freeze re-applied: 89.29M / 280.61M params trainable"
+#   "freeze re-applied: 79.14M / 270.46M params trainable"
 # and NO "Training from scratch."
 
 set -euo pipefail

@@ -27,7 +27,7 @@
 #   python -m pip install "transformer_engine[pytorch]==2.16.1" --no-build-isolation
 # ----------------------------------------------------------------------------------------
 
-set -uo pipefail
+# set -uo pipefail
 cd /cluster/scratch/ecetin/MemoryKrea || exit 1
 
 # Env (HF_HOME cache, PYTHONPATH incl. src/external/lyra) + the memorykrea venv python first
