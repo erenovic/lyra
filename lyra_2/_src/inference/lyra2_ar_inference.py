@@ -652,6 +652,7 @@ class Lyra2InferencePipeline:
         if self.retrieval_cache is not None:
             old_len = snap["cache_len"]
             self.retrieval_cache._world_points = self.retrieval_cache._world_points[:old_len]
+            self.retrieval_cache._valid_points = self.retrieval_cache._valid_points[:old_len]
             self.retrieval_cache._latent_indices = self.retrieval_cache._latent_indices[:old_len]
             self.retrieval_cache._frame_ids = self.retrieval_cache._frame_ids[:old_len]
             if self.retrieval_cache._store_values:

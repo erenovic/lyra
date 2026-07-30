@@ -43,6 +43,35 @@ from lyra_2._src.datasets.plucker_embed_corrupter import (
 )
 
 
+def _retrieve_debug_sink() -> Optional[str]:
+    """Return the ``LYRA_RETRIEVE_DEBUG`` sink, or None when retrieval debugging is off.
+
+    Unset -> disabled (zero overhead, and no extra device syncs in ``Sparse3DCache.retrieve``).
+    Set to a path -> one JSON line per ``retrieve()`` call is appended there. Set to anything
+    else (e.g. ``1``) -> the records go to the logger instead.
+    """
+    v = os.environ.get("LYRA_RETRIEVE_DEBUG")
+    return v if v else None
+
+
+def _retrieve_debug_emit(record: dict) -> None:
+    """Write one retrieval-diagnostics record to the configured sink. Never raises."""
+    sink = _retrieve_debug_sink()
+    if not sink:
+        return
+    import json
+
+    line = json.dumps(record)
+    if os.sep in sink or sink.endswith(".jsonl"):
+        try:
+            with open(sink, "a") as f:
+                f.write(line + "\n")
+            return
+        except OSError as e:  # fall back to the log rather than killing a rollout
+            log.warning(f"LYRA_RETRIEVE_DEBUG: cannot write {sink}: {e}", rank0_only=True)
+    log.info(f"Sparse3DCache.retrieve debug: {line}", rank0_only=True)
+
+
 WAN2PT1_I2V_COND_LATENT_KEY = "i2v_WAN2PT1_cond_latents"
 LYRA2_BUFFER_SINCOS_MULTIRES = 2
 LYRA2_BUFFER_MLP_SQUEEZE_DIM = 256
@@ -115,6 +144,10 @@ class Lyra2Model(WANDiffusionModel):
         self._latest_condition_state_pixels = None
         self._latest_plucker_rays_pixels = None
         self._latest_gt_gen_pixels = None
+        # Retrieved spatial-memory slots (for visualization): the padded length-3 encoded slot frame
+        # ids and how many were REAL retrievals (the rest are left-padding with frame 0).
+        self._latest_spatial_slot_ids = None
+        self._latest_spatial_retrieved_count = None
         # Parse Lyra2 AR metadata
         self._init_lyra2_metadata()
         self.framepack_weights_initialized = False
@@ -2016,6 +2049,7 @@ class Lyra2Model(WANDiffusionModel):
                 skip_last_n=int(spatial_cache_skip_last_n),
                 random=bool(is_training),
                 max_coverage=not bool(is_training),
+                debug_tag=int(video_indices[-1].item()),  # target frame, for LYRA_RETRIEVE_DEBUG
             )
             spatial_selected_frame_ids_t = torch.tensor([int(fi) for (_li, fi) in retrieved], device=device, dtype=torch.long)
             if spatial_coords_all is not None:
@@ -2108,8 +2142,17 @@ class Lyra2Model(WANDiffusionModel):
             spatial_image_ids: list[int] = spatial_selected_frame_ids_t.tolist() if spatial_selected_frame_ids_t is not None and spatial_selected_frame_ids_t.numel() > 0 else []
             if self.framepack_num_spatial_hist <= 0:
                 spatial_image_ids = []
+
+            _spatial_real_count = len(spatial_image_ids)  # before left-padding: number of real retrievals
+
             if len(spatial_image_ids) < self.framepack_num_spatial_hist:
                 spatial_image_ids = [video_indices[0].item()] * (self.framepack_num_spatial_hist - len(spatial_image_ids)) + spatial_image_ids
+
+            # Visualization side-channel: the padded length-3 encoded slot frame ids + the real count
+            # (so a genuine retrieval of frame 0 can be told apart from left-padding with frame 0).
+            if self._collect_return_condition_state:
+                self._latest_spatial_slot_ids = [int(x) for x in spatial_image_ids]
+                self._latest_spatial_retrieved_count = int(_spatial_real_count)
 
             spatial_latents_list = []
             for t in spatial_image_ids:
@@ -2528,6 +2571,11 @@ class Sparse3DCache:
         self._store_device = str(store_device)
         self._store_values = bool(store_values)
         self._world_points: list[torch.Tensor] = []  # each: [B, H', W', 3]
+        # Per-entry validity, parallel to _world_points. unproject_points(return_sparse=False)
+        # ZERO-FILLS pixels with no depth, so without this every sky pixel becomes a world point
+        # at the origin; they all collapse onto one target pixel and every candidate scores a
+        # phantom +1 coverage there. Keeping the mask lets retrieve() drop them.
+        self._valid_points: list[torch.Tensor] = []  # each: [B, H', W'] bool
         self._latent_indices: list[int] = []        # latent index per entry
         self._frame_ids: list[int] = []             # original video frame id per entry
         # Optional raw RGBD camera storage for value lookup (used in inference warping).
@@ -2572,9 +2620,12 @@ class Sparse3DCache:
             mask=mask_valid,
             return_sparse=False,
         )  # [B, H', W', 3]
+        valid_pts = mask_valid[:, 0] if mask_valid.dim() == 4 else mask_valid  # [B, H', W']
         if self._store_device == "cpu":
             world_pts = world_pts.detach().to("cpu", non_blocking=True)
+            valid_pts = valid_pts.detach().to("cpu", non_blocking=True)
         self._world_points.append(world_pts)
+        self._valid_points.append(valid_pts.detach())
         self._latent_indices.append(int(latent_index))
         self._frame_ids.append(int(latent_index) if frame_id is None else int(frame_id))
         if self._store_values:
@@ -2660,6 +2711,8 @@ class Sparse3DCache:
         if self._store_device == "cpu":
             world_pts = world_pts.detach().to("cpu", non_blocking=True)
         self._world_points[idx] = world_pts
+        _v = mask_valid[:, 0] if mask_valid.dim() == 4 else mask_valid
+        self._valid_points[idx] = (_v.detach().to("cpu") if self._store_device == "cpu" else _v.detach())
         if self._store_values:
             d = depth_B_1_H_W.detach()
             w = w2c_B_4_4.detach()
@@ -2685,6 +2738,8 @@ class Sparse3DCache:
         random: bool = False,
         max_coverage: bool = False,
         depth_threshold: float = 0.1,
+        min_coverage_px: int = 0,
+        debug_tag: Optional[int] = None,
     ) -> list[tuple[int, int]]:
         """Retrieve the best candidate frames from the cache.
 
@@ -2701,11 +2756,44 @@ class Sparse3DCache:
                 When multi-view targets are given, coverage is maximized
                 across the union of all views' pixels.
             depth_threshold: Tolerance for depth-based occlusion filtering.
+            min_coverage_px: Minimum NEW target pixels a candidate must contribute to be
+                selected (``max_coverage`` only). The occlusion z-buffer fuses only CACHED
+                geometry, so when nothing in the cache observed the target's near surface the
+                "frontmost" depth is itself a through-wall value and far-away frames score a few
+                percent of spurious coverage. A floor makes the greedy return NOTHING rather than
+                that -- which the caller already handles by left-padding the spatial slots.
+                0 (default) keeps the original accept-any-positive-gain behaviour.
+            debug_tag: Identifier echoed into the ``LYRA_RETRIEVE_DEBUG`` record (the caller
+                passes the target frame id). Diagnostics only; does not affect the result.
         """
+        # Diagnostics are opt-in: when LYRA_RETRIEVE_DEBUG is unset, `_dbg` stays None and none of
+        # the .tolist()/.item() calls below run, so the hot path keeps its device-sync behavior.
+        _dbg: Optional[dict] = None
+        if _retrieve_debug_sink():
+            _dbg = {
+                "tag": None if debug_tag is None else int(debug_tag),
+                "mode": "max_coverage" if max_coverage else ("random" if random else "topk"),
+                "num_latents": int(num_latents),
+                "depth_threshold": float(depth_threshold),
+                "min_coverage_px": int(min_coverage_px),
+                "cache_size": len(self._world_points),
+            }
+
+        def _emit(stop: str, selected: list[tuple[int, int]], **extra):
+            """Finalize and write the debug record; returns ``selected`` for tail-call use."""
+            if _dbg is not None:
+                _dbg.update(extra)
+                _dbg["stop"] = stop
+                _dbg["selected"] = [int(f) for (_li, f) in selected]
+                _retrieve_debug_emit(_dbg)
+            return selected
+
         Ht, Wt = target_hw
         num_total = len(self._world_points)
+
         if num_total == 0 or num_latents <= 0:
-            return []
+            return _emit("empty-cache", [])
+
         device = target_w2c_B_4_4.device
         ds = self.downsample
         scale = 1.0 / float(ds)
@@ -2724,11 +2812,15 @@ class Sparse3DCache:
 
         s = int(skip_last_n) if skip_last_n is not None else 0
         avail = max(0, num_total - max(0, s))
+
         if avail <= 0:
-            return []
+            return _emit("skip-last-n-empty", [])
 
         num_cands = avail
         pts_list = self._world_points[:avail]
+
+        if _dbg is not None:
+            _dbg["cand_frame_ids"] = [int(f) for f in self._frame_ids[:avail]]
 
         # Vectorized projection of all (view, candidate) pairs at once.
         # pts_stacked: [C, B, H', W', 3]
@@ -2763,6 +2855,11 @@ class Sparse3DCache:
         x_all = u_all.round().long()
         y_all = v_all.round().long()
         valid = (z_all > 0) & (x_all >= 0) & (x_all < Wt_ds) & (y_all >= 0) & (y_all < Ht_ds)
+        if len(self._valid_points) >= avail:
+            # Exclude the zero-filled no-depth pixels (see _valid_points): [C,B,H',W'] -> [1,C,B,H',W'].
+            valid = valid & torch.stack(
+                [m.to(device=device) for m in self._valid_points[:avail]], dim=0
+            )[None]
 
         if not valid.any():
             log.info(
@@ -2770,7 +2867,7 @@ class Sparse3DCache:
                 f"(frame_ids={self._frame_ids[:avail]})",
                 rank0_only=True,
             )
-            return []
+            return _emit("no-valid-projection", [])
 
         # valid dims: [V, C, B, H', W'] → nonzero gives (view_ids, cand_ids, b_idx, _, _)
         view_ids, cand_ids, b_idx, _, _ = valid.nonzero(as_tuple=True)
@@ -2791,8 +2888,13 @@ class Sparse3DCache:
         min_d_for_pts = min_depth[lin_keys]
         if max_coverage:
             keep = z_vals <= (min_d_for_pts + float(depth_threshold))
+
             if not keep.any():
-                return []
+                return _emit("filter-empty", [], n_pts_projected=int(z_vals.numel()), n_pts_kept=0)
+
+            if _dbg is not None:
+                _dbg["n_pts_projected"] = int(z_vals.numel())
+                _dbg["n_pts_kept"] = int(keep.sum().item())
 
             lin_keys_keep = lin_keys[keep]
             cand_keep = cand_ids[keep].to(torch.long)
@@ -2803,8 +2905,14 @@ class Sparse3DCache:
             mask = mask_flat.view(num_cands, n_keys)
 
             k = min(int(num_latents), num_cands)
+
             if k <= 0:
-                return []
+                return _emit("k-zero", [])
+
+            if _dbg is not None:
+                # Per-candidate coverage before any greedy state: how many target pixels each
+                # cached frame could contribute at all.
+                _dbg["cand_px"] = [int(x) for x in mask.sum(dim=1).tolist()]
 
             # Pre-cover pixels from the temporally closest frame (largest frame_id)
             # because its warping is already included in the network condition.
@@ -2817,30 +2925,42 @@ class Sparse3DCache:
                 last_cand_idx = int(max(range(avail), key=lambda i: avail_frame_ids[i]))
                 covered = mask[last_cand_idx].clone()
                 excluded.add(last_cand_idx)
-                log.info(
-                    f"Sparse3DCache.retrieve(max_coverage): pre-covering pixels from temporally closest "
-                    f"frame_id={avail_frame_ids[last_cand_idx]} (cand_idx={last_cand_idx}, "
-                    f"pixels={int(covered.sum().item())})",
-                    rank0_only=True,
-                )
+
+                # Fires on every retrieve; gated with the rest of the diagnostics so a rollout
+                # doesn't emit one of these per AR step.
+                if _dbg is not None:
+                    _dbg["precover_frame_id"] = int(avail_frame_ids[last_cand_idx])
+                    _dbg["precover_px"] = int(covered.sum().item())
+                    _dbg["n_keys"] = int(n_keys)
             else:
                 covered = torch.zeros((n_keys,), device=device, dtype=torch.bool)
 
             selected: list[int] = []
+            gains: list[tuple[int, int]] = []
             for _ in range(k):
                 additional = (mask & (~covered)).sum(dim=1)
                 exclude_indices = list(selected) + list(excluded)
                 if len(exclude_indices) > 0:
                     additional[torch.tensor(exclude_indices, device=device)] = -1
                 best = int(torch.argmax(additional).item())
-                if additional[best].item() <= 0:
+                if additional[best].item() <= max(0, int(min_coverage_px)):
                     break
                 selected.append(best)
+
+                if _dbg is not None:
+                    gains.append((int(avail_frame_ids[best]), int(additional[best].item())))
+
                 covered |= mask[best]
 
+            if _dbg is not None:
+                _dbg["gains"] = gains
+
             if len(selected) == 0:
-                return []
+                return _emit("nothing-selected", [])
+
             top_ids = selected
+            _stop = "k-reached" if len(selected) >= k else "zero-gain"
+
         else:
             is_min = z_vals <= (min_d_for_pts + 1e-6)
             big_int = torch.iinfo(torch.long).max
@@ -2857,16 +2977,10 @@ class Sparse3DCache:
             scores_t = counts.float()
             scores = scores_t.tolist()
 
-            # Per-retrieve score dump: verbose (one big dict per step) -- gate behind an env flag
-            # so it doesn't bloat the training stdout. Set LYRA_RETRIEVE_DEBUG=1 to re-enable.
-            if os.environ.get("LYRA_RETRIEVE_DEBUG"):
-                score_map = {
-                    int(self._latent_indices[i]): {"score": float(scores[i]), "frame_id": int(self._frame_ids[i])}
-                    for i in range(num_cands)
-                }
-                log.info(
-                    f"Sparse3DCache.retrieve scores (latent_index -> score): {score_map}", rank0_only=True
-                )
+            # Per-retrieve score dump: verbose (one entry per candidate) -- gated with the rest of
+            # the diagnostics so it doesn't bloat the training stdout.
+            if _dbg is not None:
+                _dbg["cand_px"] = [int(x) for x in counts.tolist()]
 
             if random and num_latents > 0:
                 max_score = scores_t.max() if scores_t.numel() > 0 else scores_t.new_tensor(1.0)
@@ -2874,14 +2988,17 @@ class Sparse3DCache:
 
                 k = min(int(num_latents), scores_t.shape[0])
                 if k <= 0:
-                    return []
+                    return _emit("k-zero", [])
+
                 sampled_ids = torch.multinomial(weights, num_samples=k, replacement=False)
                 top_ids = [int(i) for i in sampled_ids.tolist()]
 
             else:
                 top_ids = sorted(range(num_cands), key=lambda i: scores[i], reverse=True)[:num_latents]
 
+            _stop = "sampled" if random else "topk"
+
         top_ids_reversed = top_ids[::-1]
-        return [(self._latent_indices[i], self._frame_ids[i]) for i in top_ids_reversed]
+        return _emit(_stop, [(self._latent_indices[i], self._frame_ids[i]) for i in top_ids_reversed])
 
 
