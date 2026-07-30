@@ -562,6 +562,140 @@ class Lyra2InferencePipeline:
         self._snapshot: dict | None = None
 
     # ------------------------------------------------------------------ #
+    # Ground-truth prefill (teacher-forced history)
+    # ------------------------------------------------------------------ #
+
+    @torch.no_grad()
+    def prefill_from_ground_truth(
+        self,
+        *,
+        video: torch.Tensor,
+        depth: torch.Tensor,
+        camera_w2c: torch.Tensor,
+        intrinsics: torch.Tensor,
+        n_prefill: int,
+    ) -> None:
+        """Teacher-force the first ``n_prefill`` GT pixel frames into the pipeline's history.
+
+        Mirrors ``__init__`` step for step, but over a ground-truth prefix instead of one repeated
+        seed frame, so afterwards the state is indistinguishable from having autoregressed that
+        prefix perfectly: the temporal buffer (anchor + most-recent latents) holds GT latents and
+        every spatial-memory candidate is a GT frame. Used by ``lyra_2/tasks/retrieval.py`` to
+        prefill both buffers before asking the model to recall the past.
+
+        ``n_prefill`` must satisfy ``(n_prefill - 1) % framepack_num_new_video_frames == 0``. That
+        is not cosmetic: ``_apply_camera_controls`` builds its plucker timeline with
+        ``13 + 3*ar_idx`` entries, which only aligns with ``selected_idx_full`` when the latent
+        history length is exactly ``T_hist + tokens_per_step * ar_idx``.
+
+        Args:
+            video: Full clip pixels [B, 3, T, H, W] in [-1, 1], absolute-frame indexed.
+            depth: Full clip metric depth [B, T, 1, H, W] (0 = invalid), absolute-frame indexed.
+            camera_w2c: Full clip world-to-camera [B, T, 4, 4].
+            intrinsics: Full clip pixel-space intrinsics [B, T, 3, 3].
+            n_prefill: Number of leading pixel frames to teacher-force into history.
+        """
+        step = int(self.model.framepack_num_new_video_frames)
+        assert (n_prefill - 1) % step == 0, f"n_prefill={n_prefill} is off the 1+{step}k chunk grid"
+        assert n_prefill <= int(video.shape[2]), f"n_prefill={n_prefill} exceeds clip length {video.shape[2]}"
+        assert n_prefill <= int(camera_w2c.shape[1]), "camera_w2c is shorter than n_prefill"
+
+        # Same 36-frame front pad as __init__, so the latent <-> absolute-frame map (latent i ends
+        # at absolute frame max(0, 4i - start_index)) keeps matching the plucker timeline.
+        self.history_frames = torch.cat(
+            [video[:, :, :1].repeat(1, 1, self.repeat_pixels, 1, 1), video[:, :, 1:n_prefill]], dim=2
+        )
+        self.history_latents, self.enc_feat_cache = _prime_encoder_cache_with_history(
+            self.history_frames, self.vae_wrap, self.vae_core, self.model, self.args.offload
+        )
+        self.history_latents = misc.to(self.history_latents, **self.model.tensor_kwargs)
+        n_lat = int(self.history_latents.shape[2])
+        assert n_lat == self.T_hist + self.tokens_per_step * ((n_prefill - 1) // step), (
+            f"prefill produced {n_lat} latents, expected "
+            f"{self.T_hist + self.tokens_per_step * ((n_prefill - 1) // step)}"
+        )
+
+        # __init__ already streamed T_hist latents through the decoder, so the cache MUST be reset
+        # before re-priming -- otherwise every generated chunk decodes T_hist latents out of phase.
+        # (_prime_encoder_cache_with_history clears the encoder side itself; the decoder side has
+        # no such self-heal.)
+        self.vae_core.clear_cache()
+        self.dec_feat_cache = [None] * self.vae_core._conv_num
+        roundtrip = _decode_new_latent_chunk(
+            self.vae_wrap,
+            self.vae_core,
+            self.dec_feat_cache,
+            self.history_latents,
+            latent_offset=0,
+            model=self.model,
+            enable_offload=self.args.offload,
+        )
+        assert int(roundtrip.shape[2]) == int(self.history_frames.shape[2]), (
+            f"decoder produced {roundtrip.shape[2]} frames for {n_lat} latents, expected "
+            f"{self.history_frames.shape[2]}"
+        )
+        del roundtrip
+
+        self.first_latent = self.history_latents[:, :, :1]
+        self.last_hist_frame = video[:, :, n_prefill - 1]
+        # Absolute-indexed and exactly n_prefill long: autoregressive_step appends the next chunk
+        # before reading, so entering step ar_idx the length must equal its start_px_idx.
+        self.cam_w2c = camera_w2c[:, :n_prefill].to(torch.float32)
+        self.intrinsics = intrinsics[:, :n_prefill].to(torch.float32)
+
+        # Rebuild the spatial cache over the prefilled span using the SAME admission rule as
+        # _update_depth_cache's gt branch (frame 0 plus every stride-th frame, cache id = frame id).
+        stride = max(int(self.model.config.spatial_memory_stride), 1)
+        self.retrieval_cache = Sparse3DCache(
+            downsample=self.model.config.spatial_memory_downsample,
+            store_device="cpu" if self.args.offload else str(self.cam_w2c.device.type),
+            store_values=True,
+        )
+        for f in range(n_prefill):
+            if f != 0 and f % stride != 0:
+                continue
+
+            self.retrieval_cache.add(
+                self._prefill_depth(depth, f),
+                self.cam_w2c[:, f],
+                self.intrinsics[:, f],
+                latent_index=int(f),
+                frame_id=int(f),
+            )
+
+        d_last = self._prefill_depth(depth, n_prefill - 1)
+        depth_rel = reliable_depth_mask_range_batch(d_last, ratio_thresh=0.15)
+        if isinstance(depth_rel, (tuple, list)):
+            depth_rel = depth_rel[0]
+
+        self.buffer_depth_latest = d_last
+        self.buffer_mask_latest = depth_rel.to(dtype=torch.float32, device=d_last.device)
+        self.buffer_depth_latest_frame_idx = n_prefill - 1
+
+        self.ar_idx = (n_prefill - 1) // step
+        self.tokens_generated = self.tokens_per_step * self.ar_idx
+        self.warp_video_collect.clear()
+        self.spatial_slot_ids_collect.clear()
+        self._snapshot = None
+
+        if self.args.offload:
+            self.history_latents = self.history_latents.cpu()
+            self.history_frames = self.history_frames.cpu()
+            self.buffer_depth_latest = self.buffer_depth_latest.cpu()
+            self.buffer_mask_latest = self.buffer_mask_latest.cpu()
+
+        log.info(
+            f"GT prefill: {n_prefill} px frames -> {n_lat} latents, ar_idx={self.ar_idx}, "
+            f"cache={len(self.retrieval_cache._world_points)} frames (stride {stride})",
+            rank0_only=True,
+        )
+
+    def _prefill_depth(self, depth: torch.Tensor, f: int) -> torch.Tensor:
+        """Depth frame ``f`` as a [B, 1, H, W] float32 tensor on the camera device."""
+        d = depth[:, f].to(self.cam_w2c.device, dtype=torch.float32)
+        return d.unsqueeze(1) if d.dim() == 3 else d
+
+    # ------------------------------------------------------------------ #
     # Snapshot / revert helpers (one-level undo)
     # ------------------------------------------------------------------ #
 
