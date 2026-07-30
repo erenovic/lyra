@@ -89,6 +89,8 @@ def _from_bidir_experiment(job_name: str, smoke: bool = False) -> dict:
             config=dict(
                 # Base default is `power` with enabled=True, which builds a SECOND full net.
                 ema=dict(enabled=False),
+                # Match the bidir init's wan_shift=1.0 pretraining; eval with sample_maze --shift 1.0.
+                shift=1,
                 # ---- framepack geometry: matched to the in-house AR model for comparison ----
                 # anchor + 6 temporal context + 3 spatial slots + 3 generated latents, ALL at
                 # kernel size 1 (uncompressed). That is the point: our model's context frames are

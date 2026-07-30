@@ -144,6 +144,9 @@ class MazeLyra2Model(Lyra2Model):
             guidance=VAL_GUIDANCE,
             seed=VAL_SEED,
             num_steps=VAL_NUM_STEPS,
+            # Sample on the training schedule; the arg default is 5.0 and would silently diverge
+            # from a config that trains at a different shift.
+            shift=float(self.config.shift),
             return_condition_state=True,
         )
         # Return shape varies with what was collected: latents | (latents, cond) |

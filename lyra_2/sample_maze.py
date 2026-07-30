@@ -125,7 +125,7 @@ def main() -> None:
         "older level-pose checkpoints.",
     )
     ap.add_argument("--num-steps", type=int, default=35, help="diffusion sampling steps per chunk")
-    ap.add_argument("--shift", type=float, default=5.0, help="flow-match scheduler shift")
+    ap.add_argument("--shift", type=float, default=1.0, help="flow-match scheduler shift")
     # CFG is inert for this config: disable_cross_attn removes the text/CLIP branch, so the
     # conditional and unconditional passes are identical and guidance*(cond-uncond)==0. Kept
     # for API parity; 1.0 matches the (guidance-free) training objective.
