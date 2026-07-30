@@ -104,7 +104,7 @@ def _from_bidir_experiment(job_name: str, smoke: bool = False) -> dict:
                 # Tokens at 64/latent frame: (1 anchor + 6 temporal + 3 spatial + 3 gen)*64 = 832.
                 # g3 -> 3 new latents = 12 px frames per segment, so at num_frames=401 the data
                 # allows (401-1)//12 = 33 segments; self_aug costs one (lyra2_model.py:177-178).
-                framepack_type="f1k1f6k1f3s1_g3",
+                framepack_type="f1k1f3s1f6k1_g3",
                 state_t=3,
                 max_segments=4 if smoke else 33,
                 starting_frame_ratio=0.0,
