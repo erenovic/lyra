@@ -706,7 +706,12 @@ class WanVAE:
         is_amp=True,
         benchmark: bool = False,
         temporal_window: int = 4,
+        latent_mean=None,
+        latent_std=None,
     ):
+        # latent_mean/latent_std override the stock Wan constants below. They whiten mu for the
+        # DiT, so they belong to the ENCODER that produced the latents -- a finetuned vae_pth needs
+        # its own measured pair or the latents come out off-scale. None keeps the stock values.
         self.dtype = dtype
         self.device = device
         self.temporal_window = temporal_window
@@ -747,6 +752,13 @@ class WanVAE:
             2.8251,
             1.9160,
         ]
+        if latent_mean is not None:
+            mean = [float(v) for v in latent_mean]
+        if latent_std is not None:
+            std = [float(v) for v in latent_std]
+        assert len(mean) == z_dim and len(std) == z_dim, (
+            f"latent stats must have {z_dim} channels; got mean {len(mean)}, std {len(std)}"
+        )
         self.mean = torch.tensor(mean, dtype=dtype, device=device)
         self.std = torch.tensor(std, dtype=dtype, device=device)
         self.scale = [self.mean, 1.0 / self.std]
@@ -818,6 +830,8 @@ class Wan2pt1VAEInterface(VideoTokenizerInterface):
                 "./checkpoints/vae/video_mean_std.pt",
             ),
             temporal_window=kwargs.get("temporal_window", 4),
+            latent_mean=kwargs.get("latent_mean"),
+            latent_std=kwargs.get("latent_std"),
         )
         if kwargs.get("compile_encode", False) and hasattr(torch, "compile"):
             torch_compile_available = True
