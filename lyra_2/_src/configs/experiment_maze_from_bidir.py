@@ -23,7 +23,11 @@ Launch via ``scripts/euler/train_lyra_from_bidir.sh`` in the parent repo, which 
 ``checkpoint.load_path`` and a fresh output dir.
 """
 
+import os
+from pathlib import Path
+
 from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 
 from lyra_2._ext.imaginaire.lazy_config import LazyCall as L
 from lyra_2._ext.imaginaire.lazy_config import LazyDict
@@ -64,7 +68,46 @@ WAN2PT1_280M_I2V_LYRA2_BIDIR: LazyDict = L(Lyra2WanModel)(
 )
 
 
-def _from_bidir_experiment(job_name: str, smoke: bool = False) -> dict:
+# ---- finetuned Wan-VAE ------------------------------------------------------------------------
+# Read from the PARENT REPO's config rather than copied: the weights and their whitening constants
+# are one unit (latents written with one pair only decode with that pair), and a second transcript
+# of the numbers is exactly how the two drift apart.
+_LYRA_ROOT = Path(__file__).resolve().parents[3]  # .../src/external/lyra
+_REPO = _LYRA_ROOT.parents[2]  # .../MemoryKrea
+_FT_VAE_YAML = _REPO / "configs" / "model" / "vae" / "finetuned_maze64.yaml"
+
+
+def _load_ft_vae() -> tuple[str, list[float], list[float]]:
+    """Read ``(vae_path, latent_mean, latent_std)`` from the parent repo's vae config.
+
+    The yaml interpolates ``${oc.env:PWD}``, which Hydra resolves against the CWD -- and Lyra runs
+    from the LYRA root, so it must be pinned to the parent repo for the duration of the resolve or
+    the path silently points into the wrong tree.
+
+    Raises:
+        FileNotFoundError: If the config is missing; failing loudly beats falling back to the stock
+            VAE under a config named ``ftvae``.
+    """
+    if not _FT_VAE_YAML.is_file():
+        raise FileNotFoundError(
+            f"finetuned-VAE config not found at {_FT_VAE_YAML}; the ftvae experiments read their "
+            "weights + whitening constants from the parent repo"
+        )
+
+    prev = os.environ.get("PWD")
+    os.environ["PWD"] = str(_REPO)
+    try:
+        cfg = OmegaConf.load(_FT_VAE_YAML)
+        OmegaConf.resolve(cfg)
+        return str(cfg.vae_path), list(cfg.latent_mean), list(cfg.latent_std)
+    finally:
+        if prev is None:
+            os.environ.pop("PWD", None)
+        else:
+            os.environ["PWD"] = prev
+
+
+def _from_bidir_experiment(job_name: str, smoke: bool = False, ft_vae: bool = False) -> dict:
     """Build the from-bidir experiment. ``smoke`` shortens everything for a pipeline check.
 
     ``job_name`` is the OUTPUT-FOLDER leaf, not the Hydra selector: the run lands in
@@ -72,7 +115,7 @@ def _from_bidir_experiment(job_name: str, smoke: bool = False) -> dict:
     launcher exports an empty ``OUT_DIR`` so the root is plain ``outputs/`` and this job block owns
     the whole path -- i.e. ``outputs/lyra2_from_bidir/memorymaze/<job_name>``.
     """
-    return dict(
+    exp = dict(
         defaults=[
             {"override /model": "ddp_maze_lyra2_spatial"},
             {"override /net": "wan2pt1_280M_i2v_lyra2_bidir"},
@@ -187,6 +230,16 @@ def _from_bidir_experiment(job_name: str, smoke: bool = False) -> dict:
             dataset=dict(num_frames=101 if smoke else 401),
         ),
     )
+    if ft_vae:
+        # The tokenizer group is registered at package `model.config.tokenizer`
+        # (configs/defaults/common/tokenizer.py), NOT at the config root -- an override placed at
+        # the top level is silently dropped and the stock VAE loads instead.
+        vae_pth, latent_mean, latent_std = _load_ft_vae()
+        exp["model"]["config"]["tokenizer"] = dict(
+            vae_pth=vae_pth, latent_mean=latent_mean, latent_std=latent_std
+        )
+
+    return exp
 
 
 def register_from_bidir_net():
@@ -222,6 +275,33 @@ def register_lyra2_from_bidir_smoke():
     )
 
 
+def register_lyra2_from_bidir_ftvae():
+    """Same recipe on the FINETUNED Wan-VAE (weights + its measured whitening constants).
+
+    Hydra selector ``maze_small_ftvae``; output folder leaf ``finetuned_ftvae``. Pair this with an
+    init checkpoint exported from a DiT trained on finetuned-VAE latents -- a DiT fitted to the
+    stock latent space would be reading a different distribution.
+    """
+    cs.store(
+        group="experiment",
+        package="_global_",
+        name="maze_small_ftvae",
+        node=_from_bidir_experiment("finetuned_ftvae", ft_vae=True),
+    )
+
+
+def register_lyra2_from_bidir_ftvae_smoke():
+    """Pipeline smoke for the finetuned-VAE variant: 50 iters, short windows."""
+    cs.store(
+        group="experiment",
+        package="_global_",
+        name="maze_small_ftvae_smoke",
+        node=_from_bidir_experiment("finetuned_ftvae_smoke", smoke=True, ft_vae=True),
+    )
+
+
 register_from_bidir_net()
 register_lyra2_from_bidir()
 register_lyra2_from_bidir_smoke()
+register_lyra2_from_bidir_ftvae()
+register_lyra2_from_bidir_ftvae_smoke()
